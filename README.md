@@ -1,6 +1,10 @@
 # pitnub_platform
 pitnub Platform repository
 
+#Оглавление
+#[Kubernetes-intro](#kubernetes-intro)
+#[Kubernetes-controllers](#kubernetes-controllers)
+
 # Kubernetes-intro
 1. Установил bash-completion: brew install bash-completion
 2. Установил kubectl: brew install kubectl
@@ -247,3 +251,7 @@ status: {}
 
 Запускаем pod:  
 $ kubectl apply -f frontend-pod-healthy.yaml
+
+
+# Kubernetes-controllers
+
