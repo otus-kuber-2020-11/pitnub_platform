@@ -1,9 +1,9 @@
 # pitnub_platform
 pitnub Platform repository
 
-#Оглавление
-#[Kubernetes-intro](#kubernetes-intro)
-#[Kubernetes-controllers](#kubernetes-controllers)
+# Оглавление
+# [Kubernetes-intro](#kubernetes-intro)
+# [Kubernetes-controllers](#kubernetes-controllers)
 
 # Kubernetes-intro
 1. Установил bash-completion: brew install bash-completion
