@@ -6,6 +6,7 @@ pitnub Platform repository
 ### [ДЗ Kubernetes-controllers](#kubernetes-controllers)
 ### [ДЗ Kubernetes-security](#kubernetes-security)
 
+
 # Kubernetes-intro
 1. Установил bash-completion: brew install bash-completion
 2. Установил kubectl: brew install kubectl
