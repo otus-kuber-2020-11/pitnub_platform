@@ -1096,11 +1096,9 @@ node-exporter-wgzr7   2/2     Running   0          61s
 ### task01
  - Создать Service Account bob, дать ему роль admin в рамках всего кластера  
    <pre>
-   $ kubectl apply -f 01-ns-monitoring.yaml
-   namespace/monitoring created
-   $ kubectl apply -f 02-ServiceAccount.yaml -n monitoring
+   $ kubectl apply -f 01-ServiceAccount.yaml
    serviceaccount/bob created
-   $ kubectl apply -f 03-ClusterRoleBinding.yaml
+   $ kubectl apply -f 02-ClusterRoleBinding.yaml
    clusterrolebinding.rbac.authorization.k8s.io/bob-admin created
    $ kubectl get clusterrolebinding
    NAME            ROLE                     AGE
@@ -1108,7 +1106,7 @@ node-exporter-wgzr7   2/2     Running   0          61s
    </pre>
  - Создать Service Account dave без доступа к кластеру  
    <pre>
-   $ kubectl apply -f 04-ServiceAccount.yaml -n monitoring
+   $ kubectl apply -f 03-ServiceAccount.yaml
    serviceaccount/dave created
    </pre>
    Без привязки к роли доступа у данной учетки к кластеру не будет.
