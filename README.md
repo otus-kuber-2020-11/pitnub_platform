@@ -4,6 +4,8 @@ pitnub Platform repository
 ## Оглавление
 ### [ДЗ Kubernetes-intro](#kubernetes-intro)
 ### [ДЗ Kubernetes-controllers](#kubernetes-controllers)
+### [ДЗ Kubernetes-security](#kubernetes-security)
+
 
 # Kubernetes-intro
 1. Установил bash-completion: brew install bash-completion
@@ -1088,4 +1090,57 @@ node-exporter-8mb9f   2/2     Running   0          61s
 node-exporter-wglkv   2/2     Running   0          61s
 node-exporter-wgzr7   2/2     Running   0          61s
 </pre>
+
+
+# Kubernetes-security
+### task01
+ - Создать Service Account bob, дать ему роль admin в рамках всего кластера  
+   <pre>
+   $ kubectl apply -f 01-ServiceAccount.yaml
+   serviceaccount/bob created
+   $ kubectl apply -f 02-ClusterRoleBinding.yaml
+   clusterrolebinding.rbac.authorization.k8s.io/bob-admin created
+   $ kubectl get clusterrolebinding
+   NAME            ROLE                     AGE
+   bob-admin       ClusterRole/admin        99s
+   </pre>
+ - Создать Service Account dave без доступа к кластеру  
+   <pre>
+   $ kubectl apply -f 03-ServiceAccount.yaml
+   serviceaccount/dave created
+   </pre>
+   Без привязки к роли доступа у данной учетки к кластеру не будет.
+
+### task02
+ - Создать Namespace prometheus  
+   $ kubectl apply -f 01-ns-prometheus.yaml  
+   namespace/prometheus created
+ - Создать Service Account carol в этом Namespace  
+   $ kubectl apply -f 02-ServiceAccount.yaml -n prometheus  
+   serviceaccount/carol created
+ - Дать всем Service Account в Namespace prometheus возможность делать get, list, watch
+   в отношении Pods всего кластера  
+   <pre>
+   $ kubectl apply -f 03-ClusterRole.yaml                 
+   clusterrole.rbac.authorization.k8s.io/prometheus-pods-read created
+   $ kubectl apply -f 04-ClusterRoleBinding.yaml
+   clusterrolebinding.rbac.authorization.k8s.io/prometheus created
+   </pre>
+   
+### task03
+ - Создать Namespace dev  
+   $ kubectl apply -f 01-ns-dev.yaml  
+   namespace/dev created
+ - Создать Service Account jane в Namespace dev  
+   $ kubectl apply -f 02-ServiceAccount.yaml  
+   serviceaccount/jane created
+ - Дать jane роль admin в рамках Namespace dev  
+   $ kubectl apply -f 03-RoleBinding.yaml   
+   rolebinding.rbac.authorization.k8s.io/jane-admin created
+ - Создать Service Account ken в Namespace dev  
+   $ kubectl apply -f 04-ServiceAccount.yaml  
+   serviceaccount/ken created
+ - Дать ken роль view в рамках Namespace dev  
+   $ kubectl apply -f 05-RoleBinding.yaml   
+   rolebinding.rbac.authorization.k8s.io/ken-view created
 
