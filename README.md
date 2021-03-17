@@ -6,6 +6,7 @@ pitnub Platform repository
 ### [ДЗ Kubernetes-controllers](#kubernetes-controllers)
 ### [ДЗ Kubernetes-security](#kubernetes-security)
 ### [ДЗ Kubernetes-networks](#kubernetes-networks)
+### [ДЗ Kubernetes-volumes](#kubernetes-volumes)
 
 
 # Kubernetes-intro
@@ -1987,4 +1988,216 @@ export HOSTNAME='web-6f978c47bc-tnzkd'
 export HOSTNAME='web-6f978c47bc-6948b'
 export HOSTNAME='web-6f978c47bc-zr8j7'
 export HOSTNAME='web-6f978c47bc-tnzkd'
+</pre>
+
+
+# Kubernetes-volumes
+
+<pre>
+$ kind create cluster
+Creating cluster "kind" ...
+Set kubectl context to "kind-kind"
+You can now use your cluster with:
+kubectl cluster-info --context kind-kind
+
+$ kubectl cluster-info --context kind-kind
+Kubernetes control plane is running at https://127.0.0.1:63779
+KubeDNS is running at https://127.0.0.1:63779/api/v1/namespaces/kube-system/services/kube-dns:dns/proxy
+To further debug and diagnose cluster problems, use 'kubectl cluster-info dump'.
+</pre>
+
+В этом ДЗ мы развернем StatefulSet c MinIO (https://min.io) - локальным S3 хранилищем  
+
+<pre>
+minio-statefulset.yaml:
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+spec:
+  serviceName: minio
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio # has to match .spec.template.metadata.labels
+  template:
+    metadata:
+      labels:
+        app: minio # has to match .spec.selector.matchLabels
+    spec:
+      containers:
+      - name: minio
+        env:
+        - name: MINIO_ACCESS_KEY
+          value: "minio"
+        - name: MINIO_SECRET_KEY
+          value: "minio123"
+        image: minio/minio
+        args:
+        - server
+        - /data 
+        ports:
+        - containerPort: 9000
+        # These volume mounts are persistent. Each pod in the PetSet
+        # gets a volume mounted based on this field.
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        # Liveness probe detects situations where MinIO server instance
+        # is not working properly and needs restart. Kubernetes automatically
+        # restarts the pods if liveness checks fail.
+        livenessProbe:
+          httpGet:
+            path: /minio/health/live
+            port: 9000
+          initialDelaySeconds: 120
+          periodSeconds: 20
+  # These are converted to volume claims by the controller
+  # and mounted at the paths mentioned above. 
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 10Gi
+</pre>
+
+В результате применения конфигурации должно произойти следующее:
+ - Запуститься под с MinIO
+ - Создаться PVC
+ - Динамически создаться PV на этом PVC с помощью дефолотного StorageClass
+
+<pre>
+$ kubectl apply -f minio-statefulset.yaml
+statefulset.apps/minio created
+$ kubectl get pods                 
+NAME      READY   STATUS              RESTARTS   AGE
+minio-0   0/1     ContainerCreating   0          8s
+$ kubectl get pods
+NAME      READY   STATUS    RESTARTS   AGE
+minio-0   1/1     Running   0          18s
+$ kubectl get pvc 
+NAME           STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+data-minio-0   Bound    pvc-c0f9d4b7-fe45-4bec-b6ef-b444d5f77cc3   10Gi       RWO            standard       45s
+$ kubectl get pv 
+NAME                                       CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                  STORAGECLASS   REASON   AGE
+pvc-c0f9d4b7-fe45-4bec-b6ef-b444d5f77cc3   10Gi       RWO            Delete           Bound    default/data-minio-0   standard                46s
+</pre>
+
+Применение Headless Service  
+Для того, чтобы наш StatefulSet был доступен изнутри кластера, создадим Headless Service
+
+<pre>
+minio-headless-service.yaml:
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  labels:
+    app: minio
+spec:
+  clusterIP: None
+  ports:
+    - port: 9000
+      name: minio
+  selector:
+    app: minio
+
+$ kubectl apply -f minio-headless-service.yaml
+service/minio created
+$ kubectl get svc
+NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)    AGE
+kubernetes   ClusterIP   10.96.0.1    none          443/TCP    36m
+minio        ClusterIP   None         none          9000/TCP   8s
+$ kubectl get statefulsets.apps -o wide
+NAME    READY   AGE   CONTAINERS   IMAGES
+minio   1/1     12m   minio        minio/minio
+</pre>
+
+Проверка работы MinIO
+ - Проверить работу Minio можно с помощью консольного клиента mc (https://github.com/minio/mc)
+
+<pre>
+$ brew install minio/stable/mc
+$ kubectl port-forward minio-0 9000:9000
+$ mc alias set minio http://127.0.0.1:9000 minio minio123
+$ mc admin info minio
+●  127.0.0.1:9000
+   Uptime: 55 minutes 
+   Version: 2021-03-12T00:00:47Z
+   Network: 1/1 OK 
+
+$ mc mb minio/test
+Bucket created successfully `minio/test`.
+$ mc ls --summarize minio 
+[2021-03-16 15:24:57 EET]     0B test/
+Total Size: 0 B
+Total Objects: 1
+$ mc cp minio-mc-pod.yaml minio/test
+$ mc ls --summarize minio/test
+[2021-03-16 15:25:35 EET]   203B minio-mc-pod.yaml
+Total Size: 203 B
+Total Objects: 1
+$ mc cat minio/test/minio-mc-pod.yaml
+$ mc cp minio/test/minio-mc-pod.yaml mpod.yaml
+$ ls -l
+total 32
+-rw-r--r--@ 1 pit  staff   173 Mar 15 22:16 minio-headless-service.yaml
+-rw-r--r--@ 1 pit  staff   203 Mar 16 08:59 minio-mc-pod.yaml
+-rw-r--r--@ 1 pit  staff  1430 Mar 16 13:33 minio-statefulset.yaml
+-rw-r--r--  1 pit  staff   203 Mar 16 15:27 mpod.yaml
+$ mc rm minio/test/minio-mc-pod.yaml
+Removing `minio/test/minio-mc-pod.yaml`.
+$ mc rb minio/test
+Removed `minio/test` successfully.
+</pre>
+
+В конфигурации нашего StatefulSet данные указаны в открытом виде, что не безопасно.  
+Поместите данные в secrets (https://kubernetes.io/docs/concepts/configuration/secret/)  
+и настройте конфигурацию на их использование.
+
+<pre>
+$ echo -n 'minio' | base64
+bWluaW8=
+$ echo -n 'minio123' | base64
+bWluaW8xMjM=
+
+minio-secrets.yaml:
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-secret
+type: Opaque
+data:
+  MINIO_ACCESS_KEY: bWluaW8=
+  MINIO_SECRET_KEY: bWluaW8xMjM=
+
+В файле StatefulSet делаем замену этого блока
+...
+        env:
+        - name: MINIO_ACCESS_KEY
+          value: "minio"
+        - name: MINIO_SECRET_KEY
+          value: "minio123"
+...
+на
+...
+        envFrom:
+        - secretRef:
+            name: minio-secret
+...
+
+$ kubectl apply -f minio-secrets.yaml
+secret/minio-secret created
+$ kubectl apply -f minio-statefulset-secrets.yaml 
+statefulset.apps/minio configured
+
+$ mc admin info minio
+●  127.0.0.1:9000
+   Uptime: 2 minutes 
+   Version: 2021-03-17T02:33:02Z
+   Network: 1/1 OK 
 </pre>
