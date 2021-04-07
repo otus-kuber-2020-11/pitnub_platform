@@ -1,0 +1,9 @@
+redis:
+  cluster:
+    enabled: false
+  master:
+    resources:
+      requests:
+        memory: 125Mi
+        cpu: 70m
+  usePassword: false

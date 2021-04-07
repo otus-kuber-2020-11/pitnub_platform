@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+  name: frontend
+  labels:
+    app: frontend
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    cert-manager.io/acme-challenge-type: "http01"
+spec:
+  tls:
+  - secretName: shop.34.118.74.177.nip.io
+    hosts:
+    - shop.34.118.74.177.nip.io
+  rules:
+  - http:
+      paths:
+      - path: /
+        backend:
+          serviceName: frontend 
+          servicePort: 80
+    host: shop.34.118.74.177.nip.io
