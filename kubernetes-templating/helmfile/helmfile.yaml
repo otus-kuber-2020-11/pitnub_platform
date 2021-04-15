@@ -1,0 +1,46 @@
+repositories:
+- name: stable
+  url: https://charts.helm.sh/stable
+- name: ingress-nginx
+  url: https://kubernetes.github.io/ingress-nginx
+- name: jetstack
+  url: https://charts.jetstack.io
+- name: harbor
+  url: https://helm.goharbor.io
+
+releases:
+- name: ingress-nginx
+  chart: ingress-nginx/ingress-nginx
+  namespace: ingress-nginx
+  version: 3.24.0
+
+- name: cert-manager
+  chart: jetstack/cert-manager
+  namespace: cert-manager
+  version: 1.2.0
+  needs: 
+  - ingress-nginx/ingress-nginx
+  hooks:
+  - events: ["prepare"]
+    showlogs: true
+    command: "kubectl"
+    args: ["apply", "-f", "https://github.com/jetstack/cert-manager/releases/download/v1.2.0/cert-manager.crds.yaml"]
+  - events: ["postsync"]
+    showlogs: true
+    command: "kubectl"
+    args: ["apply", "-f", "le-clusterissuer.yaml"]
+
+- name: harbor
+  chart: harbor/harbor
+  namespace: harbor
+  version: 1.6.0
+  needs:
+  - ingress-nginx/ingress-nginx
+  - cert-manager/cert-manager
+  hooks:
+  - events: ["prepare"]
+    showlogs: true
+    command: "./setup_external_ip.sh"
+  values:
+  - values.yaml
+
