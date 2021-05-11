@@ -9,6 +9,7 @@ pitnub Platform repository
 ### [ДЗ Kubernetes-volumes](#kubernetes-volumes)
 ### [ДЗ Kubernetes-templating](#kubernetes-templating)
 ### [ДЗ Kubernetes-operators](#kubernetes-operators)
+### [ДЗ Kubernetes-monitoring](#kubernetes-monitoring)
 
 
 # Kubernetes-intro
@@ -4211,3 +4212,389 @@ $ kubectl get jobs
 NAME                        COMPLETIONS   DURATION   AGE
 backup-mysql-instance-job   1/1           2s         20s
 </pre>
+
+
+# Kubernetes-monitoring
+
+## Мониторинг сервиса в кластере k8s
+
+- Для выполнения данного домашнего задания Вам необходимо создать кастомный образ nginx (базовый образ не важен),
+который по определенному пути будет отдавать свои метрики.
+- Далее Вам необходимо использовать nginx exporter который будет преобразовывать эти метрики в формат понятный prometheus.
+- Установка в один или разные ns роли не играет.
+- Установка в один или разные поды роли не играет.
+- Создайте дополнительную ветку kubernetes-monitoring.  
+  Результаты ДЗ должны находить в директории kubernetes-monitoring.
+
+- Сборка кастомного образа
+  - Должен быть написан Deployment содержащий в себе миниму 3 контейнера nginx.
+  - В файле конфигурации nginx должны присутствовать строки (для отображения статуса по /basic_status):
+
+<pre>
+location = /basic_status {
+    stub_status;
+}
+</pre>
+
+<pre>
+Dockerfile:
+
+FROM nginx:alpine
+LABEL maintainer="pitnub"
+ARG nginx_uid=1001
+ARG nginx_gid=1001
+EXPOSE 80
+RUN apk add shadow && usermod -u $nginx_uid -o nginx && groupmod -g $nginx_gid -o nginx \
+ && sed -i 's/^}/    location = \/basic_status {\n        stub_status;\n    }\n}/' /etc/nginx/conf.d/default.conf
+CMD ["nginx", "-g", "daemon off;"]
+
+$ docker build -t pitnub/webmon:0.1 .
+$ docker push pitnub/webmon:0.1
+</pre>
+
+
+- Конфигурация nginx exporter
+  - Достаточно в аргументах указать -nginx.scrape-uri
+  - Не забываем перед этим настроить service для оригинального пода.
+  - https://github.com/nginxinc/nginx-prometheus-exporter
+
+<pre>
+webmon-deployment.yaml:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webmon
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: webmon
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 100%
+  template:
+    metadata:
+      labels:
+        app: webmon
+    spec:
+      containers:
+      - name: webmon
+        image: pitnub/webmon:0.1
+        livenessProbe:
+          tcpSocket: { port: 80 }
+        readinessProbe:
+          httpGet:
+            path: /index.html
+            port: 80
+        ports:
+        - name: web
+          containerPort: 80
+      - name: exporter
+        image: nginx/nginx-prometheus-exporter:0.9.0
+        args: ["-nginx.scrape-uri=http://127.0.0.1/basic_status", "-nginx.retries=3"]
+        ports:
+        - name: exporter
+          containerPort: 9113
+
+webmon-service.yaml:
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: webmon
+  labels:
+    app: webmon
+spec:
+  selector:
+    app: webmon
+  type: ClusterIP
+  ports:
+    - name: web
+      protocol: TCP
+      port: 80
+      targetPort: 80
+    - name: exporter
+      protocol: TCP
+      port: 9113
+      targetPort: 9113
+
+webmon-ingress.yaml:
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  rules:
+    - host: webmon.local
+      http:
+        paths:
+          - path: /web(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                 name: webmon
+                 port:
+                   number: 80
+
+
+$ sudo vim /private/etc/hosts
+  192.168.64.12 webmon.local
+$ minikube addons enable ingress
+$ kubectl apply -f webmon-deployment.yaml
+$ kubectl apply -f webmon-service.yaml
+$ kubectl apply -f webmon-ingress.yaml
+
+$ kubectl apply -f bundle.yaml
+customresourcedefinition.apiextensions.k8s.io/alertmanagerconfigs.monitoring.coreos.com created
+customresourcedefinition.apiextensions.k8s.io/alertmanagers.monitoring.coreos.com created
+customresourcedefinition.apiextensions.k8s.io/podmonitors.monitoring.coreos.com created
+customresourcedefinition.apiextensions.k8s.io/probes.monitoring.coreos.com created
+customresourcedefinition.apiextensions.k8s.io/prometheuses.monitoring.coreos.com created
+customresourcedefinition.apiextensions.k8s.io/prometheusrules.monitoring.coreos.com created
+customresourcedefinition.apiextensions.k8s.io/servicemonitors.monitoring.coreos.com created
+customresourcedefinition.apiextensions.k8s.io/thanosrulers.monitoring.coreos.com created
+clusterrolebinding.rbac.authorization.k8s.io/prometheus-operator created
+clusterrole.rbac.authorization.k8s.io/prometheus-operator created
+deployment.apps/prometheus-operator created
+serviceaccount/prometheus-operator created
+service/prometheus-operator created
+</pre>
+
+<pre>
+Создаем RBAC для Prometheus:
+
+prom-sa.yaml:
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  
+prom-role.yaml:
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+- apiGroups: [""]
+  resources:
+  - nodes
+  - nodes/metrics
+  - services
+  - endpoints
+  - pods
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources:
+  - configmaps
+  verbs: ["get"]
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  verbs: ["get", "list", "watch"]
+- nonResourceURLs: ["/metrics"]
+  verbs: ["get"]
+
+prom-rolebinding.yaml:
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+- kind: ServiceAccount
+  name: prometheus
+  namespace: default
+
+$ kubectl apply -f prom-sa.yaml
+$ kubectl apply -f prom-role.yaml
+$ kubectl apply -f prom-rolebinding.yaml
+</pre>
+
+<pre>
+Создаем объект Prometheus:
+
+prometheus.yaml:
+
+apiVersion: monitoring.coreos.com/v1
+kind: Prometheus
+metadata:
+  name: prometheus
+spec:
+  replicas: 1
+  externalUrl: http://webmon.local/prom
+  serviceAccountName: prometheus
+  serviceMonitorSelector:
+    matchLabels:
+      team: frontend
+  resources:
+    requests:
+      memory: 400Mi
+  enableAdminAPI: true
+
+$ kubectl apply -f prometheus.yaml
+
+Создаем объект ServiceMonitor:
+
+servicemonitor.yaml:
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: webmon-sm
+  labels:
+    team: frontend
+spec:
+  selector:
+    matchLabels:
+      app: webmon
+  endpoints:
+  - port: exporter
+
+$ kubectl apply -f servicemonitor.yaml
+
+Добавляем в файл webmon-ingress.yaml блок с доступом к UI Prometheus:
+
+          - path: /prom(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                 name: prometheus-operated
+                 port:
+                   number: 9090
+
+$ kubectl apply -f webmon-ingress.yaml
+</pre>
+
+
+Доступ к Prometheus c хостовой машины: http://webmon.local/prom
+![снимок окна prometheus](./kubernetes-monitoring/prometheus.png)
+
+## Добавляем Grafana
+
+<pre>
+grafana.yaml:
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: grafana
+  name: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      securityContext:
+        fsGroup: 472
+        supplementalGroups:
+        - 0    
+      containers:
+        - name: grafana
+          image: grafana/grafana:7.5.2
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: GF_SERVER_ROOT_URL
+            value: "http://localhost:3000/grafana"
+          - name: GF_SERVER_SERVE_FROM_SUB_PATH
+            value: "true"
+          ports:
+            - containerPort: 3000
+              name: http-grafana
+              protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /robots.txt
+              port: 3000
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            successThreshold: 1
+            timeoutSeconds: 2
+          livenessProbe:
+            failureThreshold: 3
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            successThreshold: 1
+            tcpSocket:
+              port: 3000
+            timeoutSeconds: 1            
+          resources:
+            requests:
+              cpu: 250m
+              memory: 750Mi
+          volumeMounts:
+            - mountPath: /var/lib/grafana
+              name: grafana
+      volumes:
+        - name: grafana
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+spec:
+  ports:
+    - port: 3000
+      protocol: TCP
+      targetPort: http-grafana
+  selector:
+    app: grafana
+  sessionAffinity: None
+</pre>
+
+Основа взята с официального сайта.  
+Изменил том на emptyDir и добавил две переменные:  
+GF_SERVER_ROOT_URL=http://localhost:3000/grafana  
+GF_SERVER_SERVE_FROM_SUB_PATH=true  
+Данные переменные отображают параметры в конфигурационном файле /etc/grafana/grafana.ini  
+Необходимы для возможности использовать графану в ingress.
+
+<pre>
+$ sudo vim /private/etc/hosts
+  192.168.64.12 grafana.local
+
+Добавляем в файл webmon-ingress.yaml блок с доступом к UI Prometheus:
+    - host: grafana.local
+      http:
+        paths:
+          - path: /grafana(/|$)(.*)
+            pathType: Prefix
+            backend:
+              service:
+                 name: grafana
+                 port:
+                   number: 3000
+
+$ kubectl apply -f webmon-ingress.yaml
+$ kubectl apply -f grafana.yaml
+</pre>
+
+Доступ к Grafana c хостовой машины: http://grafana.local/grafana
+![снимок окна grafana](./kubernetes-monitoring/grafana.png)
+
+Зашел с учетными данными по умолчанию: admin:admin  
+Добавил источник данных Prometheus: http://prometheus-operated:9090  
+Добавил дашборд для отображения метрики nginx_http_requests_total
+
